@@ -1,0 +1,42 @@
+{% set version = "2.3.0" %}
+
+package:
+  name: mirbooking
+  version: {{ version }}
+
+source:
+  url: https://major.iric.ca/mirbooking/releases/mirbooking-{{ version }}.tar.xz
+  sha256: cbdfe62b5bf8c7499c6864e8a3a20359c009a30382d6ce8df27f25baa1551c61
+  patches:
+  - 0001-mkl-Move-to-compilevars.sh-to-setup-MKL-environment.patch
+
+build:
+  number: 1
+
+requirements:
+  build:
+  - {{ compiler('c') }}
+  - meson
+  - ninja
+  - glib
+  - gobject-introspection
+  - mkl
+  - openmpi
+  - tbb
+  run:
+  - glib
+  - gobject-introspection
+  - mkl
+  - openmpi
+  - tbb
+  - pygobject
+
+test:
+  commands:
+  - mirbooking --help
+
+about:
+  home: https://major.iric.ca/mirbooking/
+  license: MIT
+  summary: |
+    miRBooking simulates the stochiometric mode of action of miRNAs
