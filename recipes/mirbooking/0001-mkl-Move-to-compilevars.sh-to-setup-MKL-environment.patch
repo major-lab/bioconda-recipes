@@ -1,0 +1,143 @@
+From 7bb2650ad1a54414f1cc866fa0317bf12bbccd4b Mon Sep 17 00:00:00 2001
+From: Guillaume Poirier-Morency <guillaumepoiriermorency@gmail.com>
+Date: Tue, 8 Sep 2020 13:03:32 -0700
+Subject: [PATCH] mkl: Move to compilevars.sh to setup MKL environment
+
+Remove -Dmkl_root and -Dmkl_arch since those are now provided by the
+compilevars.sh script.
+---
+ README.md                     |  8 ++++++++
+ contrib/poisson-binomial/pb.c |  7 +++++--
+ meson.build                   | 27 ++++++++++++---------------
+ meson_options.txt             |  2 --
+ 4 files changed, 25 insertions(+), 19 deletions(-)
+
+diff --git a/README.md b/README.md
+index 68bb809..97eb0b3 100644
+--- a/README.md
++++ b/README.md
+@@ -103,6 +103,14 @@ three column TSV containing only the columns `target_accession`, `position` and
+ You'll need [Meson](http://mesonbuild.com/) and [Ninja](http://ninja-build.org/)
+ as well as GLib development files installed on your system.
+ 
++If you need to link against MKL, run the following command first:
++
++```bash
++source /opt/intel/bin/compilervars.sh intel64
++```
++
++Then build miRBooking with:
++
+ ```bash
+ mkdir build && cd build
+ meson --buildtype=release
+diff --git a/contrib/poisson-binomial/pb.c b/contrib/poisson-binomial/pb.c
+index 2ccc1e6..33eaaaa 100644
+--- a/contrib/poisson-binomial/pb.c
++++ b/contrib/poisson-binomial/pb.c
+@@ -4,7 +4,10 @@
+ #include <string.h>
+ #include <math.h>
+ 
+-#if HAVE_FFTW3
++#if HAVE_MKL_FFTW3
++#include <complex.h>
++#include <fftw/fftw3.h>
++#elif HAVE_FFTW3
+ #include <complex.h>
+ #include <fftw3.h>
+ #endif
+@@ -12,7 +15,7 @@
+ static void
+ pb_compute_pmf (PoissonBinomial *pb)
+ {
+-#if HAVE_FFTW3
++#if HAVE_MKL_FFTW3 || HAVE_FFTW3
+     fftw_complex *in;
+     fftw_plan plan;
+     size_t N = pb->n + 1;
+diff --git a/meson.build b/meson.build
+index 842a0cf..56dcd53 100644
+--- a/meson.build
++++ b/meson.build
+@@ -29,34 +29,31 @@ endif
+ 
+ # Intel MKL
+ if get_option('with_mkl')
+-    mkl_root = get_option('mkl_root')
+-    mkl_arch = get_option('mkl_arch')
+-    mkl_libdir = join_paths(mkl_root, 'lib', mkl_arch)
+     if get_option('with_mkl_ilp64')
+         mkl_interface = declare_dependency(compile_args: '-DMKL_ILP64',
+-                                       dependencies: meson.get_compiler('c').find_library('mkl_intel_ilp64', dirs: mkl_libdir))
++            dependencies: meson.get_compiler('c').find_library('mkl_intel_ilp64'))
+     else
+-        mkl_interface = meson.get_compiler('c').find_library('mkl_intel_lp64', dirs: mkl_libdir)
++        mkl_interface = meson.get_compiler('c').find_library('mkl_intel_lp64')
+         warning('MKL 64-bit interface is required for solving large systems.')
+     endif
+-    mkl_core = meson.get_compiler('c').find_library('mkl_core', dirs: mkl_libdir)
++    mkl_core = meson.get_compiler('c').find_library('mkl_core')
+ 
+     if get_option('with_mkl_tbb')
+         tbb = meson.get_compiler('c').find_library('tbb')
+-        mkl_tbb_thread = meson.get_compiler('c').find_library('mkl_tbb_thread', dirs: mkl_libdir)
++        mkl_tbb_thread = meson.get_compiler('c').find_library('mkl_tbb_thread')
+         mkl_thread = declare_dependency(dependencies: [mkl_tbb_thread, tbb])
+     elif get_option('with_openmp')
+-        mkl_gnu_thread = meson.get_compiler('c').find_library('mkl_gnu_thread', dirs: mkl_libdir)
++        mkl_gnu_thread = meson.get_compiler('c').find_library('mkl_gnu_thread')
+         mkl_thread = declare_dependency(dependencies: [mkl_gnu_thread, openmp_dep])
+     else
+-        mkl_thread = meson.get_compiler('c').find_library('mkl_sequential', dirs: mkl_libdir)
++        mkl_thread = meson.get_compiler('c').find_library('mkl_sequential')
+     endif
+ 
+     if get_option('with_mpi')
+         if get_option('with_mkl_ilp64')
+-            mkl_blacs = meson.get_compiler('c').find_library('mkl_blacs_openmpi_ilp64', dirs: mkl_libdir)
++            mkl_blacs = meson.get_compiler('c').find_library('mkl_blacs_openmpi_ilp64')
+         else
+-            mkl_blacs = meson.get_compiler('c').find_library('mkl_blacs_openmpi_lp64', dirs: mkl_libdir)
++            mkl_blacs = meson.get_compiler('c').find_library('mkl_blacs_openmpi_lp64')
+         endif
+     else
+         mkl_blacs = []
+@@ -65,7 +62,7 @@ if get_option('with_mkl')
+     mkl_pthread = meson.get_compiler('c').find_library('pthread')
+     mkl_m = meson.get_compiler('c').find_library('m')
+     mkl_dl = meson.get_compiler('c').find_library('dl')
+-    mkl_dep = declare_dependency(compile_args: ['-m64', '-I@0@'.format(join_paths(mkl_root, 'include'))],
++    mkl_dep = declare_dependency(compile_args: ['-m64'], # TODO: add -I${MKLROOT} somehow
+                                  link_args: ['-Wl,--no-as-needed'],
+                                  dependencies: [mkl_interface, mkl_thread, mkl_core, mkl_blacs, mpi_dep, mkl_pthread, mkl_m, mkl_dl])
+ 
+@@ -106,9 +103,9 @@ else
+ endif
+ 
+ if get_option('with_mkl') and get_option('with_mkl_fftw3')
+-    add_project_arguments('-DHAVE_FFTW3', language: 'c')
+-    fftw3_dep = declare_dependency(include_directories: include_directories(join_paths(mkl_root, 'include/fftw')),
+-                                   dependencies: mkl_dep)
++    # FIXME: add ${MKLROOT}/include/fftw to the include path
++    add_project_arguments('-DHAVE_MKL_FFTW3', language: 'c')
++    fftw3_dep = mkl_dep
+     message('MKL FFTW3 will be used.')
+ elif get_option('with_fftw3')
+     add_project_arguments('-DHAVE_FFTW3', language: 'c')
+diff --git a/meson_options.txt b/meson_options.txt
+index 22f0aa8..3b7f970 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -15,8 +15,6 @@ option('with_mkl_cluster', type: 'boolean', value: false)
+ option('with_pardiso', type: 'boolean', value: false)
+ 
+ # Intel MKL
+-option('mkl_root', type: 'string')
+-option('mkl_arch', type: 'string', value: 'intel64')
+ option('with_mkl', type: 'boolean', value: false)
+ option('with_mkl_ilp64', type: 'boolean', value: false)
+ option('with_mkl_tbb', type: 'boolean', value: false)
+-- 
+2.26.2
+
